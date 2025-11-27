@@ -1,0 +1,5 @@
+
+State Machine - |FinalProject|UART_rs232_rx:bt_uart|State
+Name State.READ 
+State.IDLE 0 
+State.READ 1 

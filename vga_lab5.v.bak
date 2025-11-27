@@ -1,0 +1,199 @@
+module vga_lab5(
+    //clock input
+    input clk,
+	//reset, key0
+    input reset,  
+	//key 1, start
+    input key_n, 
+	//swicthes
+    input [9:0]  sw, 
+	//from the controller	
+    input disp_ena,     
+	//column pixels
+    input [9:0] column,       
+	//row pixels
+    input [8:0] row,    
+	//red, green, blue
+    output reg [3:0] r, g, b,
+	//hexes for Er
+    output reg [6:0] hex1, hex2
+);
+
+   //debounce
+    reg [2:0] key_sync;
+    always @(posedge clk or negedge reset) begin
+		//if not reset
+        if (!reset) key_sync<= 3'b111;               
+        else key_sync <= {key_sync[1:0], key_n};
+    end
+	
+	//falling edge
+    wire key_fall = (key_sync[2:1] == 2'b10);         
+
+
+    //rectangle 
+    reg [9:0] x; 
+    reg [8:0] y; 
+    reg [9:0] w;
+    reg [8:0] h;
+
+    //color 
+    reg [3:0] R, G, B;
+
+    //error flag 
+    reg error_flag;
+
+    //lsfr for random color 
+    reg [11:0] lfsr;
+    wire lfsr_fb = lfsr[11] ^ lfsr[10] ^ lfsr[9] ^ lfsr[3];
+
+    //advance
+    always @(posedge clk or negedge reset) begin
+        if (!reset) lfsr<= 12'hD5A;
+        else if (key_fall&& sw[9]&& (sw[8:0]==9'b0)) lfsr<= {lfsr[10:0], lfsr_fb};
+    end
+
+    //screen size
+    localparam SCREEN_W = 10'd640;
+    localparam SCREEN_H = 9'd480;
+
+    //direction  ninputs 
+    wire [3:0] dir= sw[3:0];
+    wire dir_none= (dir== 4'b0000);
+    wire dir_one= (dir== 4'b0001)||(dir== 4'b0010)||(dir== 4'b0100)||(dir == 4'b1000);
+
+    //bonus 
+    wire sw9_only=sw[9]& ~sw[8]& (sw[7:0]== 8'b0);
+    wire sw8_only= ~sw[9]&  sw[8]& (sw[7:0]== 8'b0);
+
+    //simple add 
+    function [9:0] add10; input [9:0] a; input [9:0] b; begin add10 = a + b; end endfunction
+    function [8:0] add9;  input [8:0] a; input [8:0] b; begin add9  = a + b; end endfunction
+
+    //state, movement, color,  and size updates
+    always @(posedge clk or negedge reset) begin
+	
+        if (!reset) begin
+		
+            x<= 10'd189; y<= 9'd269; w<= 10'd100;h<= 9'd50;
+            R<= 4'hF; G<= 4'hF; B<= 4'hF;
+            error_flag<= 1'b0;
+			
+        end else begin
+		
+            //clear error
+            if (key_fall) error_flag<= 1'b0;
+
+            //movement  when exactly one direction is set (also not in bonus)
+            if (key_fall&& !sw9_only&& !sw8_only) begin
+			
+                if (dir_one) begin
+				
+                    case (1'b1)
+					
+                        //right (sw0)
+                        dir[0]: begin
+                            if (x + w + 10'd20<= SCREEN_W) x<= x + 10'd20;
+                            else error_flag<= 1'b1;
+                        end
+						
+                        //down(sw1)
+                        dir[1]: begin
+                            if (y + h + 9'd20 <= SCREEN_H) y<= y + 9'd20;
+                            else error_flag<= 1'b1;
+                        end
+						
+                        //up(sw2)
+                        dir[2]: begin
+                            if (y >= 9'd20) y <= y - 9'd20;
+                            else error_flag <= 1'b1;
+                        end
+						
+                        //left(sw3)
+                        dir[3]: begin
+                            if (x>= 10'd20) x<= x - 10'd20;
+                            else error_flag<= 1'b1;
+                        end
+						
+                    endcase
+					
+                end else if (!dir_none) begin
+                    //multple directions pressed, so error
+                    error_flag<= 1'b1;
+                end
+				
+            //if no direction and no bonus, do nothing
+            end
+
+            //color bonus 
+            if (key_fall&& sw9_only) begin
+                R<= lfsr[3:0];
+                G<= lfsr[7:4];
+                B<= lfsr[11:8];
+				
+                if ((lfsr[3:0]== 4'b0000)&& (lfsr[7:4]== 4'b0000)&& (lfsr[11:8]== 4'b0000)) begin
+                    R<= 4'hF;
+                end
+				
+            end
+
+            //size bonus 
+            if (key_fall&& sw8_only) begin
+			
+                if (w< 10'd400 && h< 9'd200) begin
+                    reg [9:0] w2; 
+					reg [8:0] h2;
+					
+                    w2= w<< 1; h2= h<< 1;
+					
+                    if (w2> 10'd400) w2= 10'd400;
+					
+                    if (h2> 9'd200)  h2= 9'd200;
+					
+                    if (x + w2<= SCREEN_W && y + h2<= SCREEN_H) begin
+                        w <= w2; h <= h2;
+						
+                    end else begin
+					
+                        error_flag <= 1'b1;
+                    end
+                end
+				
+            end
+			
+        end
+    end
+
+    //draw rectangle 
+    always @(*) begin
+        if (disp_ena &&
+            (column >= x) && (column < x + w) &&
+            (row    >= y) && (row    < y + h)) begin
+            r = R; g = G; b = B;
+			
+        end else begin
+		
+            r = 4'b0000; g = 4'b0000; b = 4'b0000;
+        end
+		
+    end
+
+    //7-seg bits
+    localparam [6:0] SEG_BLANK = 7'b1111111;
+    localparam [6:0] SEG_E = 7'b0000110;
+    localparam [6:0] SEG_r = 7'b0101111;
+
+    //error display  on hex1,hex2
+    always @(*) begin
+		//if error
+        if (error_flag) begin
+            hex1= SEG_E;
+            hex2= SEG_r;
+		//if not error	
+        end else begin
+            hex1= SEG_BLANK;
+            hex2= SEG_BLANK;
+        end
+    end
+
+endmodule
